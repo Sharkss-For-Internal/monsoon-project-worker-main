@@ -1,0 +1,10 @@
+# Used when building with this Dockerfile from the parent folder: send only what the image needs.
+*
+!monsoon-backend-main/pyproject.toml
+!monsoon-backend-main/README.md
+!monsoon-backend-main/app
+!monsoon-project-worker-main/pyproject.toml
+!monsoon-project-worker-main/uv.lock
+!monsoon-project-worker-main/README.md
+!monsoon-project-worker-main/jobs
+**/__pycache__
