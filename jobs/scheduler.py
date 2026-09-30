@@ -8,16 +8,77 @@ digest, maintenance.
 import logging
 
 from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 from jobs.config import get_worker_settings
 
 log = logging.getLogger("worker")
 
 
+def run_daily_pipeline() -> None:
+    """PRD §11.1 — fetch rain, score blocks (ML or SRS fallback), queue + send alerts."""
+    from app.core.db import SessionLocal
+    from app.models.enums import RunType
+    from app.services.pipeline import trigger_run
+
+    db = SessionLocal()
+    try:
+        run = trigger_run(db, RunType.SCHEDULED, triggered_by="worker")
+        log.info("Daily pipeline finished: id=%s status=%s", run.id, run.status)
+    finally:
+        db.close()
+
+
+def run_rapid_check() -> None:
+    """PRD §11.9 — every 3 hours: 72-h forecast -> heavy-rain rapid events -> urgent alerts."""
+    from app.core.db import SessionLocal
+    from app.services.rapid_check import trigger_rapid_check
+
+    db = SessionLocal()
+    try:
+        run = trigger_rapid_check(db, triggered_by="worker")
+        log.info("Rapid check finished: id=%s status=%s", run.id, run.status)
+    finally:
+        db.close()
+
+
+def run_officer_summary() -> None:
+    """PRD §14.7 — daily 07:15 summary to every active extension officer."""
+    from app.core.db import SessionLocal
+    from app.services.officer_summary import run_officer_summary as _run
+
+    db = SessionLocal()
+    try:
+        count = _run(db, triggered_by="worker")
+        log.info("Officer summary finished: %d messages queued", count)
+    finally:
+        db.close()
+
+
 def register_jobs(scheduler: BlockingScheduler) -> None:
-    """Add jobs here, e.g.:
-        scheduler.add_job(run_daily_pipeline, CronTrigger.from_crontab(settings.pipeline_cron, timezone=tz))
-    """
+    settings = get_worker_settings()
+    tz = settings.timezone
+    scheduler.add_job(
+        run_daily_pipeline,
+        CronTrigger.from_crontab(settings.pipeline_cron, timezone=tz),
+        id="daily_pipeline",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        run_rapid_check,
+        CronTrigger.from_crontab(settings.rapid_check_cron, timezone=tz),
+        id="rapid_check",
+        replace_existing=True,
+        misfire_grace_time=1800,
+    )
+    scheduler.add_job(
+        run_officer_summary,
+        CronTrigger.from_crontab(settings.officer_summary_cron, timezone=tz),
+        id="officer_summary",
+        replace_existing=True,
+        misfire_grace_time=1800,
+    )
 
 
 def main() -> None:
